@@ -85,7 +85,7 @@ TOPIC_TYPES = cv.one_of(
 )
 
 CONFIG_SCHEMA = cv.Schema({
-    cg.CONF_ID: cg.declare_id(DometicCfxBle),
+    CONF_ID: cg.declare_id(DometicCfxBle),
     CONF_MAC_ADDRESS: cv.mac_address,
     CONF_PRODUCT_TYPE: PRODUCT_TYPES,
 }).extend(cv.COMPONENT_SCHEMA)
