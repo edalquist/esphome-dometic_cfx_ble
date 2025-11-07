@@ -13,6 +13,7 @@ from esphome.const import (
 )
 from esphome.cpp_types import Component
 from esphome import automation
+from esphome.components.ble_client import CONF_BLE_CLIENT_ID
 
 UTO_LOAD = ["esp32_ble_tracker", "ble_client", "select", "number", "switch", "text_sensor", "binary_sensor", "sensor"]
 
@@ -113,7 +114,7 @@ CONFIG_SCHEMA = cv.Schema(
     {
         # use cv.declare_id, not cg.declare_id
         cv.GenerateID(CONF_ID): cv.declare_id(DometicCfxBle),
-        cv.Required(CONF_MAC_ADDRESS): cv.mac_address,
+        cv.Required(CONF_BLE_CLIENT_ID): cv.use_id(type("esphome.components.ble_client.ble_client.BLEClient")),
         cv.Required(CONF_PRODUCT_TYPE): PRODUCT_TYPES,
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -150,7 +151,7 @@ def entity_schema(platform):
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    # MACAddress has .as_hex
-    cg.add(var.set_mac_address(config[CONF_MAC_ADDRESS].as_hex))
+    ble_client_var = await cg.get_variable(config[CONF_BLE_CLIENT_ID])
+    cg.add(ble_client_var.add_node(var))  # Attach as BLEClientNode
     cg.add(var.set_product_type(config[CONF_PRODUCT_TYPE]))
 
