@@ -5,7 +5,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/entity_base.h"
 
-#include "esphome/components/ble_client/ble_client.h"  // BLEClientNode
+#include "esphome/components/ble_client/ble_client.h"
 
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -27,28 +27,12 @@ namespace dometic_cfx_ble {
 
 static const char *const TAG = "dometic_cfx_ble";
 
-// Sentinel for "no value" (INT16_DECIDEGREE_CELSIUS -32768 / 10)
-static constexpr float NO_VALUE = -3276.8f;
-
-// Topic description from the DDM mapping
 struct TopicInfo {
-  uint8_t param[4];       // 4-byte key
-  const char *type;       // e.g. "INT16_DECIDEGREE_CELSIUS"
+  uint8_t param[4];
+  const char *type;
   const char *description;
 };
 
-// DDM action codes (exactly as in test.py)
-enum : uint8_t {
-  ACTION_PUB   = 0,
-  ACTION_SUB   = 1,
-  ACTION_PING  = 2,
-  ACTION_HELLO = 3,
-  ACTION_ACK   = 4,
-  ACTION_NAK   = 5,
-  ACTION_NOP   = 6,
-};
-
-// Full topic table is defined in the .cpp
 extern const std::map<std::string, TopicInfo> TOPICS;
 
 class DometicCfxBle : public Component, public ble_client::BLEClientNode {
@@ -78,12 +62,10 @@ class DometicCfxBle : public Component, public ble_client::BLEClientNode {
   void loop() override;
   void dump_config() override;
 
-  // Frame-level helpers (wire format)
   void send_pub(const std::string &topic, const std::vector<uint8_t> &value);
   void send_sub(const std::string &topic);
   void send_ping();
 
-  // Entity helpers so they don't poke internal helpers directly
   void send_switch(const std::string &topic, bool value);
   void send_number(const std::string &topic, float value);
 
@@ -93,10 +75,9 @@ class DometicCfxBle : public Component, public ble_client::BLEClientNode {
   bool is_connected() const { return connected_; }
 
  protected:
-  void handle_notify_(const uint8_t *data, size_t len);
+  void handle_notify_(const uint8_t *data, uint16_t length);
   void update_entity_(const std::string &topic, const std::vector<uint8_t> &value);
 
-  // Typed decode helpers mirroring test.py
   float decode_to_float_(const std::vector<uint8_t> &bytes, const std::string &type_hint);
   bool decode_to_bool_(const std::vector<uint8_t> &bytes, const std::string &type_hint);
   std::string decode_to_string_(const std::vector<uint8_t> &bytes, const std::string &type_hint);
@@ -126,13 +107,11 @@ class DometicCfxBle : public Component, public ble_client::BLEClientNode {
   std::map<std::string, text_sensor::TextSensor *> text_sensors_;
 };
 
-// Thin wrappers around the hub; they just call back in.
-
 class DometicCfxBleSensor : public sensor::Sensor, public PollingComponent {
  public:
   void set_parent(DometicCfxBle *parent) { parent_ = parent; }
   void set_topic(const std::string &topic) { topic_ = topic; }
-  void update() override {}  // notifications only
+  void update() override {}
 
  protected:
   DometicCfxBle *parent_{nullptr};
@@ -143,7 +122,7 @@ class DometicCfxBleBinarySensor : public binary_sensor::BinarySensor, public Pol
  public:
   void set_parent(DometicCfxBle *parent) { parent_ = parent; }
   void set_topic(const std::string &topic) { topic_ = topic; }
-  void update() override {}  // notifications only
+  void update() override {}
 
  protected:
   DometicCfxBle *parent_{nullptr};
@@ -156,7 +135,7 @@ class DometicCfxBleSwitch : public switch_::Switch, public PollingComponent {
   void set_topic(const std::string &topic) { topic_ = topic; }
 
   void write_state(bool state) override;
-  void update() override {}  // no polling
+  void update() override {}
 
  protected:
   DometicCfxBle *parent_{nullptr};
@@ -169,7 +148,7 @@ class DometicCfxBleNumber : public number::Number, public PollingComponent {
   void set_topic(const std::string &topic) { topic_ = topic; }
 
   void control(float value) override;
-  void update() override {}  // no polling
+  void update() override {}
 
  protected:
   DometicCfxBle *parent_{nullptr};
@@ -180,7 +159,7 @@ class DometicCfxBleTextSensor : public text_sensor::TextSensor, public PollingCo
  public:
   void set_parent(DometicCfxBle *parent) { parent_ = parent; }
   void set_topic(const std::string &topic) { topic_ = topic; }
-  void update() override {}  // notifications only
+  void update() override {}
 
  protected:
   DometicCfxBle *parent_{nullptr};
