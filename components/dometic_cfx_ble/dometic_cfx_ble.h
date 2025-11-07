@@ -5,16 +5,14 @@
 #include "esphome/core/log.h"
 #include "esphome/core/entity_base.h"
 
+#include "esphome/components/ble_client/ble_client.h"  // For BLEClientNode
+#include "esphome/components/esp32_ble_tracker/esp_bt_uuid.h"  // For ESPBTUUID
+
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/number/number.h"
 #include "esphome/components/text_sensor/text_sensor.h"
-
-#include <esp_gap_ble_api.h>
-#include <esp_gattc_api.h>
-#include <esp_bt_main.h>
-#include <esp_gatt_defs.h>
 
 #include <cstdint>
 #include <cstring>
@@ -54,11 +52,10 @@ enum : uint8_t {
 // Full topic table is defined in the .cpp
 extern const std::map<std::string, TopicInfo> TOPICS;
 
-class DometicCfxBle : public Component {
+class DometicCfxBle : public Component, public ble_client::BLEClientNode {
  public:
   float get_setup_priority() const override { return setup_priority::BLUETOOTH; }
 
-  void set_mac_address(uint64_t mac);
   void set_product_type(uint8_t type) { this->product_type_ = type; }
 
   template<typename T>
@@ -91,25 +88,11 @@ class DometicCfxBle : public Component {
   void send_switch(const std::string &topic, bool value);
   void send_number(const std::string &topic, float value);
 
-  // Static callback entrypoints
-  static DometicCfxBle *instance_;
-
-  static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
-  static void gattc_event_handler(esp_gattc_cb_event_t event,
-                                  esp_gatt_if_t gatt_if,
-                                  esp_ble_gattc_cb_param_t *param);
-
-  // Instance handlers
-  void handle_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
-  void handle_gattc_event(esp_gattc_cb_event_t event,
-                          esp_gatt_if_t gatt_if,
-                          esp_ble_gattc_cb_param_t *param);
+  void gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_gattc_cb_param_t *param) override;
 
   bool is_connected() const { return connected_; }
 
  protected:
-  void start_scan_();
-  void connect_();
   void handle_notify_(const uint8_t *data, size_t len);
   void update_entity_(const std::string &topic, const std::vector<uint8_t> &value);
 
@@ -125,18 +108,18 @@ class DometicCfxBle : public Component {
                                 const TopicInfo &info,
                                 const std::vector<uint8_t> &bytes);
 
-  uint8_t mac_address_[6] = {0};
   uint8_t product_type_{0};
 
-  esp_gatt_if_t gattc_if_{ESP_GATT_IF_NONE};
-  uint16_t conn_id_{0};
-  bool connected_{false};
+  espbt::ESPBTUUID service_uuid_;
+  espbt::ESPBTUUID write_char_uuid_;
+  espbt::ESPBTUUID notify_char_uuid_;
 
   uint16_t write_handle_{0};
   uint16_t notify_handle_{0};
 
+  bool connected_{false};
+
   uint32_t last_activity_ms_{0};
-  bool scan_in_progress_{false};
 
   std::queue<std::vector<uint8_t>> send_queue_;
 

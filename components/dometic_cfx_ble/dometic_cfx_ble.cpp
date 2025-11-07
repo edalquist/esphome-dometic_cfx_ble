@@ -129,67 +129,32 @@ void DometicCfxBle::set_mac_address(uint64_t mac) {
            mac_address_[3], mac_address_[4], mac_address_[5]);
 }
 
+void DometicCfxBle::setup() override {
+  ESP_LOGCONFIG(TAG, "Setting up Dometic CFX BLE...");
+  ESP_LOGCONFIG(TAG, "Product type: %d", product_type_);
 
-void DometicCfxBle::setup() {
-  ESP_LOGI(TAG, "Initializing Dometic CFX3 BLE hub");
+  this->parent()->set_enabled(true);  // Enable the node for connection
+}
+id DometicCfxBle::loop() override {
+  if (!this->is_connected() || send_queue_.empty()) return;
 
-  instance_ = this;
+  auto frame = send_queue_.front();
+  send_queue_.pop();
 
-  esp_err_t err;
-
-  err = esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-    ESP_LOGW(TAG, "esp_bt_controller_mem_release failed: %d", err);
-  }
-
-  err = esp_ble_gap_register_callback(&DometicCfxBle::gap_event_handler);
+  esp_err_t err = this->parent()->write_characteristic(write_handle_, frame.data(), frame.size(), true);  // true for with-response
   if (err != ESP_OK) {
-    ESP_LOGE(TAG, "esp_ble_gap_register_callback failed: %d", err);
+    ESP_LOGE(TAG, "Write failed: %s", esp_err_to_name(err));
+    // Optional: Push back to queue for retry
+  } else {
+    ESP_LOGD(TAG, "Sent frame of size %d", frame.size());
   }
 
-  err = esp_ble_gattc_register_callback(&DometicCfxBle::gattc_event_handler);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "esp_ble_gattc_register_callback failed: %d", err);
-  }
-
-  err = esp_ble_gattc_app_register(0);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "esp_ble_gattc_app_register failed: %d", err);
-  }
-
-  this->start_scan_();
+  last_activity_ms_ = millis();
 }
 
-void DometicCfxBle::dump_config() {
-  ESP_LOGCONFIG(TAG, "Dometic CFX3 BLE:");
-  ESP_LOGCONFIG(TAG, "  MAC address: %02X:%02X:%02X:%02X:%02X:%02X",
-                mac_address_[0], mac_address_[1], mac_address_[2],
-                mac_address_[3], mac_address_[4], mac_address_[5]);
-  ESP_LOGCONFIG(TAG, "  Product type: %u", product_type_);
-}
-
-void DometicCfxBle::loop() {
-  const uint32_t now = millis();
-
-  if (connected_ && (now - last_activity_ms_ > 15000U)) {
-    this->send_ping();
-  }
-
-  if (connected_ && write_handle_ != 0 && !send_queue_.empty()) {
-    auto packet = std::move(send_queue_.front());
-    send_queue_.pop();
-
-    esp_err_t err = esp_ble_gattc_write_char(
-        gattc_if_, conn_id_, write_handle_,
-        static_cast<uint16_t>(packet.size()), packet.data(),
-        ESP_GATT_WRITE_TYPE_NO_RSP, ESP_GATT_AUTH_REQ_NONE);
-
-    if (err != ESP_OK) {
-      ESP_LOGW(TAG, "esp_ble_gattc_write_char failed: %d", err);
-    } else {
-      last_activity_ms_ = now;
-    }
-  }
+void DometicCfxBle::dump_config() override {
+  ESP_LOGCONFIG(TAG, "Dometic CFX BLE:");
+  ESP_LOGCONFIG(TAG, "  Product type: %d", product_type_);
 }
 
 // ----------------- Frame-level helpers --------------------------------------
@@ -255,181 +220,74 @@ void DometicCfxBle::send_number(const std::string &topic, float value) {
 
 // ----------------- GAP / GATTC plumbing -------------------------------------
 
-void DometicCfxBle::start_scan_() {
-  if (scan_in_progress_) return;
-
-  esp_ble_scan_params_t scan_params{};
-  scan_params.scan_type          = BLE_SCAN_TYPE_ACTIVE;
-  scan_params.own_addr_type      = BLE_ADDR_TYPE_PUBLIC;
-  scan_params.scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL;
-  scan_params.scan_interval      = 0x50;
-  scan_params.scan_window        = 0x30;
-  scan_params.scan_duplicate     = BLE_SCAN_DUPLICATE_DISABLE;
-
-  esp_err_t err = esp_ble_gap_set_scan_params(&scan_params);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "esp_ble_gap_set_scan_params failed: %d", err);
-    return;
-  }
-
-  scan_in_progress_ = true;
-}
-
-void DometicCfxBle::connect_() {
-  if (gattc_if_ == ESP_GATT_IF_NONE) {
-    ESP_LOGW(TAG, "connect_: GATTC interface not ready yet");
-    return;
-  }
-
-  ESP_LOGI(TAG, "Opening GATT connection to CFX3");
-
-  esp_err_t err = esp_ble_gattc_open(
-      gattc_if_, mac_address_, BLE_ADDR_TYPE_PUBLIC, true);
-
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "esp_ble_gattc_open failed: %d", err);
-  }
-}
-
-void DometicCfxBle::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
-  if (instance_ != nullptr) {
-    instance_->handle_gap_event(event, param);
-  }
-}
-
-void DometicCfxBle::gattc_event_handler(esp_gattc_cb_event_t event,
-                                        esp_gatt_if_t gatt_if,
-                                        esp_ble_gattc_cb_param_t *param) {
-  if (instance_ != nullptr) {
-    instance_->handle_gattc_event(event, gatt_if, param);
-  }
-}
-
-void DometicCfxBle::handle_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+void DometicCfxBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_gattc_cb_param_t *param) override {
   switch (event) {
-    case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT: {
-      ESP_LOGI(TAG, "BLE scan params set, starting scan");
-      esp_ble_gap_start_scanning(30);
+    case ESP_GATTC_CONNECT_EVT:
+      ESP_LOGI(TAG, "Connected to Dometic CFX device");
+      connected_ = true;
+      last_activity_ms_ = millis();
       break;
-    }
 
-    case ESP_GAP_BLE_SCAN_RESULT_EVT: {
-      auto &r = param->scan_rst;
-      if (r.search_evt != ESP_GAP_SEARCH_INQ_RES_EVT)
-        break;
-
-      if (std::memcmp(r.bda, mac_address_, 6) == 0) {
-        ESP_LOGI(TAG, "Found target CFX3, stopping scan and connecting");
-        esp_ble_gap_stop_scanning();
-        this->connect_();
-      }
-      break;
-    }
-
-    case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT: {
-      ESP_LOGD(TAG, "BLE scan stopped");
-      scan_in_progress_ = false;
-      break;
-    }
-
-    default:
-      break;
-  }
-}
-
-void DometicCfxBle::handle_gattc_event(esp_gattc_cb_event_t event,
-                                       esp_gatt_if_t gatt_if,
-                                       esp_ble_gattc_cb_param_t *param) {
-  switch (event) {
-    case ESP_GATTC_REG_EVT: {
-      gattc_if_ = gatt_if;
-      ESP_LOGI(TAG, "GATTC registered, app_id=%d", param->reg.app_id);
-      break;
-    }
-
-    case ESP_GATTC_OPEN_EVT: {
+    case ESP_GATTC_OPEN_EVT:
       if (param->open.status == ESP_GATT_OK) {
-        conn_id_ = param->open.conn_id;
-        connected_ = true;
-        last_activity_ms_ = millis();
-        ESP_LOGI(TAG, "GATTC connected, conn_id=%d", conn_id_);
-
-        esp_bt_uuid_t service_uuid{};
-        service_uuid.len = ESP_UUID_LEN_128;
-        std::memcpy(service_uuid.uuid.uuid128, SERVICE_UUID_128, sizeof(SERVICE_UUID_128));
-        esp_ble_gattc_search_service(gatt_if, conn_id_, &service_uuid);
+        ESP_LOGI(TAG, "GATT open successful, starting service discovery");
+        this->parent()->start_service_discovery();
       } else {
-        ESP_LOGW(TAG, "GATTC open failed, status=%d", param->open.status);
+        ESP_LOGE(TAG, "GATT open failed: status %d", param->open.status);
       }
       break;
-    }
 
-    case ESP_GATTC_SEARCH_CMPL_EVT: {
-      esp_bt_uuid_t write_uuid{};
-      write_uuid.len = ESP_UUID_LEN_128;
-      std::memcpy(write_uuid.uuid.uuid128, WRITE_CHAR_UUID_128, sizeof(WRITE_CHAR_UUID_128));
+    case ESP_GATTC_SEARCH_CMPL_EVT:
+      ESP_LOGI(TAG, "Service discovery complete");
 
-      esp_bt_uuid_t notify_uuid{};
-      notify_uuid.len = ESP_UUID_LEN_128;
-      std::memcpy(notify_uuid.uuid.uuid128, NOTIFY_CHAR_UUID_128, sizeof(NOTIFY_CHAR_UUID_128));
+      auto *write_char = this->parent()->get_characteristic(service_uuid_, write_char_uuid_);
+      if (write_char == nullptr) {
+        ESP_LOGE(TAG, "Write characteristic not found");
+        return;
+      }
+      write_handle_ = write_char->handle;
+      ESP_LOGD(TAG, "Write handle: 0x%04X", write_handle_);
 
-      esp_gattc_char_elem_t char_elem[2];
-      uint16_t count = 0;
+      auto *notify_char = this->parent()->get_characteristic(service_uuid_, notify_char_uuid_);
+      if (notify_char == nullptr) {
+        ESP_LOGE(TAG, "Notify characteristic not found");
+        return;
+      }
+      notify_handle_ = notify_char->handle;
+      ESP_LOGD(TAG, "Notify handle: 0x%04X", notify_handle_);
 
-      if (esp_ble_gattc_get_char_by_uuid(
-              gatt_if, conn_id_, 0, 0xFFFF, write_uuid, char_elem, &count) == ESP_OK &&
-          count > 0) {
-        write_handle_ = char_elem[0].char_handle;
+      // Enable notifications
+      esp_err_t err = this->parent()->enable_notifications(notify_handle_);
+      if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to enable notifications: %s", esp_err_to_name(err));
+      } else {
+        ESP_LOGD(TAG, "Notifications enabled");
       }
 
-      count = 0;
-      if (esp_ble_gattc_get_char_by_uuid(
-              gatt_if, conn_id_, 0, 0xFFFF, notify_uuid, char_elem, &count) == ESP_OK &&
-          count > 0) {
-        notify_handle_ = char_elem[0].char_handle;
+      // Send initial commands
+      send_ping();
+      std::string sub_topic;
+      switch (product_type_) {
+        case 1: sub_topic = "SUBSCRIBE_APP_SZ"; break;
+        case 2: sub_topic = "SUBSCRIBE_APP_SZI"; break;
+        case 3: sub_topic = "SUBSCRIBE_APP_DZ"; break;
+        default: ESP_LOGE(TAG, "Invalid product type"); return;
       }
-
-      if (notify_handle_ != 0) {
-        uint8_t cccd[2] = {0x01, 0x00};
-        esp_err_t err = esp_ble_gattc_write_char_descr(
-            gatt_if, conn_id_, notify_handle_ + 1, sizeof(cccd), cccd,
-            ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (err != ESP_OK) {
-          ESP_LOGW(TAG, "Failed to enable notifications, err=%d", err);
-        }
-      }
-
-      this->send_ping();
-      std::string sub_key =
-          (product_type_ == 1) ? "SUBSCRIBE_APP_SZ"
-                               : (product_type_ == 2) ? "SUBSCRIBE_APP_SZI" : "SUBSCRIBE_APP_DZ";
-      this->send_sub(sub_key);
+      send_sub(sub_topic);
       break;
-    }
 
-    case ESP_GATTC_NOTIFY_EVT: {
-      if (param->notify.is_notify &&
-          param->notify.value != nullptr &&
-          param->notify.value_len > 0) {
-        this->handle_notify_(param->notify.value, param->notify.value_len);
-      }
+    case ESP_GATTC_NOTIFY_EVT:
+      if (param->notify.handle != notify_handle_) break;
+      handle_notify_(param->notify.value, param->notify.value_len);
+      last_activity_ms_ = millis();
       break;
-    }
 
-    case ESP_GATTC_DISCONNECT_EVT: {
-      ESP_LOGW(TAG, "GATTC disconnected, reason=%d", param->disconnect.reason);
+    case ESP_GATTC_DISCONNECT_EVT:
       connected_ = false;
       write_handle_ = 0;
       notify_handle_ = 0;
+      ESP_LOGI(TAG, "Disconnected from device");
       break;
-    }
-
-    case ESP_GATTC_WRITE_CHAR_EVT: {
-      if (param->write.status != ESP_GATT_OK) {
-        ESP_LOGW(TAG, "Write char status=%d", param->write.status);
-      }
-      break;
-    }
 
     default:
       break;
