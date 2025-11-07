@@ -187,7 +187,7 @@ class DometicCfxBleTextSensor : public text_sensor::TextSensor, public PollingCo
   void update() override {}  // notifications only
 
  protected:
-  DometicCfxBle *parent_{nullptr};
+  DometicCfxBle *parent_{nullptr};  
   std::string topic_;
 };
 

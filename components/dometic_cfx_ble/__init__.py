@@ -14,7 +14,7 @@ from esphome.const import (
 from esphome.cpp_types import Component
 from esphome import automation
 
-AUTO_LOAD = ["esp32_ble_tracker", "select", "number", "switch", "text_sensor"]
+UTO_LOAD = ["esp32_ble_tracker", "ble_client", "select", "number", "switch", "text_sensor", "binary_sensor", "sensor"]
 
 dometic_cfx_ble_ns = cg.esphome_ns.namespace("dometic_cfx_ble")
 DometicCfxBle = dometic_cfx_ble_ns.class_("DometicCfxBle", cg.Component)
